@@ -3,11 +3,14 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 from scipy.stats import linregress
-import matplotlib.pyplot as plt
+import time
 
-# 페이지 설정
+# 페이지 설정 (가장 위에 있어야 함)
 st.set_page_config(page_title="Magnificent 7 Beast Strategy", layout="wide")
+
+# 제목
 st.title("🦁 Magnificent 7: 1x 야수 조련 대시보드")
+st.markdown("---")
 
 # ---------------------------------------------------------
 # 1. 전략 파라미터 (Method B)
@@ -23,23 +26,51 @@ STRATEGY = {
 }
 
 # ---------------------------------------------------------
-# 2. 데이터 로드 및 분석 함수
+# 2. 데이터 로드 및 분석 함수 (캐싱 적용)
 # ---------------------------------------------------------
-@st.cache_data
+@st.cache_data(ttl=3600)  # 1시간마다 갱신
 def analyze_market():
     tickers = list(STRATEGY.keys())
-    data = yf.download(tickers, period="1y", progress=False)
     
-    # 멀티인덱스 처리
+    # 데이터 다운로드 (에러 방지용 예외처리 강화)
+    try:
+        data = yf.download(tickers, period="1y", progress=False)
+    except Exception as e:
+        st.error(f"데이터 다운로드 중 치명적 오류 발생: {e}")
+        return pd.DataFrame()
+
+    # 데이터가 비어있으면 빈 DF 반환
+    if data.empty:
+        return pd.DataFrame()
+    
+    # 멀티인덱스 컬럼 처리 (yfinance 버전 호환성)
     if isinstance(data.columns, pd.MultiIndex):
-        data.columns = data.columns.get_level_values(0)
+        try:
+            # 'Close' 레벨이 있으면 가져오고, 없으면 레벨 0을 가져옴
+            if 'Close' in data.columns.get_level_values(0):
+                data = data['Close']
+            else:
+                data.columns = data.columns.get_level_values(0)
+        except:
+            pass # 구조가 단순하면 패스
+    
+    # Close 컬럼만 남기기 (가끔 Adj Close 등이 섞일 때 대비)
+    # yfinance 최신 버전은 'Close' 밑에 티커가 있는 구조일 수 있음
     
     report = []
     
     for ticker in tickers:
         try:
-            df = data[[ticker]].dropna()
-            closes = df[ticker].values
+            # 해당 티커의 데이터만 추출
+            if ticker in data.columns:
+                series = data[ticker].dropna()
+            else:
+                # 데이터 구조가 다를 경우 (단일 종목 다운로드 등)
+                continue
+                
+            closes = series.values
+            if len(closes) < 20: continue # 데이터 너무 적으면 패스
+            
             p = STRATEGY[ticker]
             
             win = 20
@@ -65,6 +96,7 @@ def analyze_market():
                 sigmas[i] = curr_sigma
                 slopes[i] = curr_slope
                 
+                # 어제까지의 상태 추적
                 if i < len(closes) - 1:
                     if not hold:
                         if curr_sigma <= -p['Ent']:
@@ -73,13 +105,14 @@ def analyze_market():
                         if curr_sigma >= p['Ext'] or curr_slope < (ent_slope - p['Drop']):
                             hold = False
             
-            # 오늘자 상태
+            # 오늘자 상태 판단
             today_sigma = sigmas[-1]
             today_slope = slopes[-1]
             today_price = closes[-1]
             
             status = "HOLDING" if hold else "WAITING"
             action = "HOLD"
+            info = ""
             
             if hold:
                 cut_slope = ent_slope - p['Drop']
@@ -103,33 +136,59 @@ def analyze_market():
             })
             
         except Exception as e:
+            # 개별 종목 에러는 무시하고 진행
             continue
             
     return pd.DataFrame(report)
 
 # ---------------------------------------------------------
-# 3. 화면 출력 (UI)
+# 3. 메인 실행 로직 (자동 실행)
 # ---------------------------------------------------------
-if st.button('🚀 야수 신호 분석 시작'):
-    with st.spinner('데이터 수집 및 3D 연산 중...'):
-        df_res = analyze_market()
-        
-        st.success("분석 완료!")
-        
-        # 스타일링 함수
-        def color_action(val):
-            color = 'black'
-            if 'BUY' in val: color = 'red'
-            elif 'SELL' in val: color = 'blue'
-            elif 'HOLD' in val: color = 'green'
-            return f'color: {color}; font-weight: bold;'
 
-        st.dataframe(df_res.style.map(color_action, subset=['Action']), use_container_width=True)
-        
-        st.markdown("### 📊 전략 가이드")
+# 로딩 표시
+with st.spinner('🦁 야수들이 깨어나고 있습니다... (데이터 수집 중)'):
+    df_res = analyze_market()
+
+# 결과 출력
+if not df_res.empty:
+    st.success(f"분석 완료! ({time.strftime('%Y-%m-%d %H:%M:%S')})")
+    
+    # 스타일링 함수 (오류 방지를 위해 컬럼 존재 여부 확인)
+    def color_action(val):
+        color = 'black'
+        if 'BUY' in val: color = 'red'
+        elif 'SELL' in val: color = 'blue'
+        elif 'HOLD' in val: color = 'green'
+        return f'color: {color}; font-weight: bold;'
+
+    # 데이터프레임 표시 (높이 자동 조절)
+    st.dataframe(
+        df_res.style.map(color_action, subset=['Action']).format({
+            'Price': '{:.2f}',
+            'Sigma': '{:.2f}',
+            'Slope': '{:.2f}%'
+        }), 
+        use_container_width=True,
+        hide_index=True
+    )
+    
+    # 전략 가이드 표시
+    with st.expander("📊 전략 운용 가이드 (Click to open)", expanded=True):
         st.info("""
-        * **BUY:** 과매도 구간 진입 (즉시 매수 후 Slope 기록)
+        * **BUY (진입):** 과매도 구간 진입 (즉시 매수 후 Slope 기록)
         * **SELL (손절):** 진입 시점보다 기울기(Slope)가 Drop Limit 이상 꺾임
         * **SELL (익절):** 과매수 Sigma 도달
-        * **Method B:** 매도 자금은 즉시 다른 보유 종목에 재투자하십시오.
+        * **HOLD (보유):** 아직 청산 신호 없음
+        * **운용 원칙 (Method B):** 매도 자금은 즉시 다른 보유 종목에 재투자하십시오. (현금 보유 0원 원칙)
         """)
+
+else:
+    st.error("⚠️ 데이터를 불러오지 못했습니다.")
+    st.warning("""
+    **가능한 원인:**
+    1. 야후 파이낸스(yfinance) 서버 일시적 오류
+    2. 데이터 다운로드 속도가 너무 느림
+    3. 티커명이 변경됨
+    
+    **해결책:** 잠시 후 새로고침(F5)을 눌러주세요.
+    """)
