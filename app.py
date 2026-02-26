@@ -5,11 +5,10 @@ import yfinance as yf
 from scipy.stats import linregress
 import time
 
-# 페이지 설정 (가장 위에 있어야 함)
-st.set_page_config(page_title="Magnificent 7 Beast Strategy", layout="wide")
+# 페이지 설정
+st.set_page_config(page_title="Magnificent 7 Pro Dashboard", layout="wide")
 
-# 제목
-st.title("🦁 Magnificent 7: 1x 야수 조련 대시보드")
+st.title("🦁 Magnificent 7: 1x 야수 조련 프로 대시보드")
 st.markdown("---")
 
 # ---------------------------------------------------------
@@ -26,169 +25,183 @@ STRATEGY = {
 }
 
 # ---------------------------------------------------------
-# 2. 데이터 로드 및 분석 함수 (캐싱 적용)
+# 2. 데이터 분석 및 가격 역산 함수
 # ---------------------------------------------------------
-@st.cache_data(ttl=3600)  # 1시간마다 갱신
-def analyze_market():
+@st.cache_data(ttl=1800) # 30분 캐시
+def analyze_market_pro():
     tickers = list(STRATEGY.keys())
     
-    # 데이터 다운로드 (에러 방지용 예외처리 강화)
     try:
         data = yf.download(tickers, period="1y", progress=False)
     except Exception as e:
-        st.error(f"데이터 다운로드 중 치명적 오류 발생: {e}")
+        st.error(f"데이터 다운로드 실패: {e}")
         return pd.DataFrame()
 
-    # 데이터가 비어있으면 빈 DF 반환
-    if data.empty:
-        return pd.DataFrame()
-    
-    # 멀티인덱스 컬럼 처리 (yfinance 버전 호환성)
+    if data.empty: return pd.DataFrame()
+
+    # 컬럼 정리
     if isinstance(data.columns, pd.MultiIndex):
         try:
-            # 'Close' 레벨이 있으면 가져오고, 없으면 레벨 0을 가져옴
             if 'Close' in data.columns.get_level_values(0):
                 data = data['Close']
             else:
                 data.columns = data.columns.get_level_values(0)
-        except:
-            pass # 구조가 단순하면 패스
-    
-    # Close 컬럼만 남기기 (가끔 Adj Close 등이 섞일 때 대비)
-    # yfinance 최신 버전은 'Close' 밑에 티커가 있는 구조일 수 있음
-    
+        except: pass
+
     report = []
     
     for ticker in tickers:
         try:
-            # 해당 티커의 데이터만 추출
-            if ticker in data.columns:
-                series = data[ticker].dropna()
-            else:
-                # 데이터 구조가 다를 경우 (단일 종목 다운로드 등)
-                continue
-                
+            if ticker not in data.columns: continue
+            
+            series = data[ticker].dropna()
             closes = series.values
-            if len(closes) < 20: continue # 데이터 너무 적으면 패스
+            if len(closes) < 30: continue
             
             p = STRATEGY[ticker]
-            
             win = 20
-            sigmas = np.full(len(closes), 999.0)
-            slopes = np.full(len(closes), -999.0)
             x = np.arange(win)
             
+            # 시뮬레이션 상태 변수
             hold = False
-            ent_slope = 0.0
+            entry_slope = 0.0 # 진입 시점의 기울기
             
-            # 시뮬레이션
-            for i in range(win, len(closes)):
+            # 전체 히스토리 시뮬레이션 (현재 보유 상태 추적용)
+            for i in range(win, len(closes)-1):
                 y = closes[i-win:i]
                 s, inter, _, _, _ = linregress(x, y)
                 std = np.std(y - (s*x + inter))
                 
                 curr_sigma = 999.0
                 curr_slope = -999.0
-                
                 if std > 0: curr_sigma = (closes[i] - (s*(win-1)+inter)) / std
                 if closes[i] > 0: curr_slope = (s / closes[i]) * 100
                 
-                sigmas[i] = curr_sigma
-                slopes[i] = curr_slope
-                
-                # 어제까지의 상태 추적
-                if i < len(closes) - 1:
-                    if not hold:
-                        if curr_sigma <= -p['Ent']:
-                            hold = True; ent_slope = curr_slope
-                    else:
-                        if curr_sigma >= p['Ext'] or curr_slope < (ent_slope - p['Drop']):
-                            hold = False
+                if not hold:
+                    if curr_sigma <= -p['Ent']:
+                        hold = True; entry_slope = curr_slope
+                else:
+                    # 익절 or 손절(Slope Drop)
+                    if curr_sigma >= p['Ext'] or curr_slope < (entry_slope - p['Drop']):
+                        hold = False
+
+            # --- [오늘자 데이터 정밀 분석] ---
+            # 오늘 기준 지표 계산
+            y_last = closes[-win:]
+            s, inter, _, _, _ = linregress(x, y_last)
+            L = s*(win-1) + inter # 회귀선 상의 오늘 적정가
+            std = np.std(y_last - (s*x + inter)) # 표준편차
             
-            # 오늘자 상태 판단
-            today_sigma = sigmas[-1]
-            today_slope = slopes[-1]
             today_price = closes[-1]
+            today_slope = (s / today_price) * 100 if today_price > 0 else 0
+            today_sigma = (today_price - L) / std if std > 0 else 0
             
+            # --- [가격 역산 로직] ---
+            # Sigma = (Price - L) / std  =>  Price = L + (Sigma * std)
+            target_buy_price = L + (-p['Ent'] * std)
+            target_sell_price_sigma = L + (p['Ext'] * std)
+            
+            # 상태 판단
             status = "HOLDING" if hold else "WAITING"
-            action = "HOLD"
-            info = ""
+            action = "HOLD" # 기본값
+            
+            # 화면 표시용 변수들
+            display_ent_sigma = f"-{p['Ent']} (${target_buy_price:.2f})"
+            display_ext_sigma = f"{p['Ext']} (${target_sell_price_sigma:.2f})"
+            display_ent_slope = "-"
+            display_stop_slope = "-"
             
             if hold:
-                cut_slope = ent_slope - p['Drop']
-                if today_sigma >= p['Ext']: action = "SELL (익절)"
-                elif today_slope < cut_slope: action = "SELL (손절)"
-                else: action = "HOLD (보유)"
-                info = f"Stop Slope: {cut_slope:.2f}%"
+                # 보유 중일 때
+                cut_slope_limit = entry_slope - p['Drop']
+                display_ent_slope = f"{entry_slope:.2f}%"
+                display_stop_slope = f"{cut_slope_limit:.2f}%"
+                
+                if today_sigma >= p['Ext']:
+                    action = "SELL (익절)"
+                elif today_slope < cut_slope_limit:
+                    action = "SELL (손절)"
+                else:
+                    action = "HOLD (보유)"
             else:
-                if today_sigma <= -p['Ent']: action = "BUY (진입)"
-                else: action = "WAIT (대기)"
-                info = f"Target Sigma: -{p['Ent']}"
+                # 대기 중일 때
+                if today_sigma <= -p['Ent']:
+                    action = "BUY (진입)"
+                    # 진입 신호 발생 시, 오늘 슬로프가 진입 슬로프가 됨
+                    display_ent_slope = f"{today_slope:.2f}% (New)"
+                    display_stop_slope = f"{today_slope - p['Drop']:.2f}% (Est)"
+                else:
+                    action = "WAIT (대기)"
 
             report.append({
                 'Ticker': ticker,
-                'Price': today_price,
-                'Sigma': today_sigma,
-                'Slope': today_slope,
-                'Status': status,
-                'Action': action,
-                'Detail': info
+                'Action': action,          # 매매 신호 (가장 중요)
+                'Price': today_price,      # 현재가
+                'Cur Sigma': today_sigma,  # 현재 시그마
+                'Cur Slope': today_slope,  # 현재 기울기
+                'Entry Sigma (Price)': display_ent_sigma, # 목표 진입가
+                'Exit Sigma (Price)': display_ext_sigma,  # 목표 청산가
+                'Entry Slope': display_ent_slope,         # 진입 시 기울기
+                'Stop Slope': display_stop_slope          # 손절 기준 기울기
             })
             
         except Exception as e:
-            # 개별 종목 에러는 무시하고 진행
             continue
             
     return pd.DataFrame(report)
 
 # ---------------------------------------------------------
-# 3. 메인 실행 로직 (자동 실행)
+# 3. UI 렌더링
 # ---------------------------------------------------------
 
-# 로딩 표시
-with st.spinner('🦁 야수들이 깨어나고 있습니다... (데이터 수집 중)'):
-    df_res = analyze_market()
+with st.spinner('🦁 야수들의 맥박(Slope)을 측정 중입니다...'):
+    df_res = analyze_market_pro()
 
-# 결과 출력
 if not df_res.empty:
-    st.success(f"분석 완료! ({time.strftime('%Y-%m-%d %H:%M:%S')})")
+    st.success(f"데이터 업데이트: {time.strftime('%Y-%m-%d %H:%M:%S')}")
     
-    # 스타일링 함수 (오류 방지를 위해 컬럼 존재 여부 확인)
-    def color_action(val):
-        color = 'black'
-        if 'BUY' in val: color = 'red'
-        elif 'SELL' in val: color = 'blue'
-        elif 'HOLD' in val: color = 'green'
-        return f'color: {color}; font-weight: bold;'
+    # 컬러링 함수 정의
+    def highlight_rows(row):
+        action = row['Action']
+        color = ''
+        if 'BUY' in action:
+            return ['background-color: #d4edda; color: #155724; font-weight: bold'] * len(row) # 연한 초록 배경
+        elif 'SELL' in action:
+            return ['background-color: #f8d7da; color: #721c24; font-weight: bold'] * len(row) # 연한 빨강 배경
+        elif 'HOLD' in action:
+            return ['background-color: #e2e3e5; color: #383d41'] * len(row) # 회색 배경
+        return [''] * len(row)
 
-    # 데이터프레임 표시 (높이 자동 조절)
+    def text_color_action(val):
+        if 'BUY' in val: return 'color: green; font-weight: bold;'
+        if 'SELL' in val: return 'color: red; font-weight: bold;'
+        if 'HOLD' in val: return 'color: blue; font-weight: bold;'
+        return 'color: black;'
+
+    # 데이터프레임 스타일 적용
     st.dataframe(
-        df_res.style.map(color_action, subset=['Action']).format({
-            'Price': '{:.2f}',
-            'Sigma': '{:.2f}',
-            'Slope': '{:.2f}%'
-        }), 
+        df_res.style
+        .map(text_color_action, subset=['Action'])
+        .format({
+            'Price': '${:.2f}',
+            'Cur Sigma': '{:.2f}',
+            'Cur Slope': '{:.2f}%'
+        })
+        .set_properties(**{'text-align': 'center'})
+        .set_table_styles([{'selector': 'th', 'props': [('text-align', 'center')]}])
+        , 
         use_container_width=True,
         hide_index=True
     )
     
-    # 전략 가이드 표시
-    with st.expander("📊 전략 운용 가이드 (Click to open)", expanded=True):
-        st.info("""
-        * **BUY (진입):** 과매도 구간 진입 (즉시 매수 후 Slope 기록)
-        * **SELL (손절):** 진입 시점보다 기울기(Slope)가 Drop Limit 이상 꺾임
-        * **SELL (익절):** 과매수 Sigma 도달
-        * **HOLD (보유):** 아직 청산 신호 없음
-        * **운용 원칙 (Method B):** 매도 자금은 즉시 다른 보유 종목에 재투자하십시오. (현금 보유 0원 원칙)
-        """)
+    # 범례 및 설명
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.info("**🟢 BUY (진입)**\n\n현재 시그마가 'Entry Sigma' 이하로 떨어졌습니다. 즉시 매수하고 자금을 태우세요.")
+    with c2:
+        st.error("**🔴 SELL (청산)**\n\n익절(Sigma 도달)하거나 손절(Slope 꺾임) 신호입니다. 즉시 매도하여 현금을 확보하거나 리밸런싱하세요.")
+    with c3:
+        st.warning("**🔵 HOLD (보유)**\n\n아직 추세가 살아있습니다. 'Stop Slope' 밑으로 기울기가 떨어지지 않는지 매일 체크하세요.")
 
 else:
-    st.error("⚠️ 데이터를 불러오지 못했습니다.")
-    st.warning("""
-    **가능한 원인:**
-    1. 야후 파이낸스(yfinance) 서버 일시적 오류
-    2. 데이터 다운로드 속도가 너무 느림
-    3. 티커명이 변경됨
-    
-    **해결책:** 잠시 후 새로고침(F5)을 눌러주세요.
-    """)
+    st.error("데이터 수집 실패. 잠시 후 새로고침 해주세요.")
