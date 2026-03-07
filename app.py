@@ -9,264 +9,244 @@ import time
 # ⚙️ 페이지 설정
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="2x Real Beast Strategy",
-    page_icon="🦁",
+    page_title="US 5 Beasts V18.0 (Alpha Hunter)",
+    page_icon="🦅",
     layout="wide"
 )
 
 # ---------------------------------------------------------
-# ⚙️ 1. 전략 파라미터 (Logic: 1배수 기준)
+# ⚙️ 1. 전략 파라미터 (V18.0 미국 Set 1: Alpha Hunter)
+# 시그널(sig)은 1배수로 분석하고, 실제 매매는 3배수로 진행
 # ---------------------------------------------------------
-# 시그널은 여기서 찾습니다 (역사가 긴 1배수 형님들)
-STRATEGY = {
-    'SMH':  {'Drop': 1.5, 'Ent': 1.4, 'Ext': 2.7, 'Theme': '반도체'},
-    'SLV':  {'Drop': 0.7, 'Ent': 1.3, 'Ext': 3.6, 'Theme': '은(Silver)'},
-    'URA':  {'Drop': 0.6, 'Ent': 1.9, 'Ext': 3.6, 'Theme': '우라늄'},
-    'USO':  {'Drop': 0.3, 'Ent': 1.1, 'Ext': 1.5, 'Theme': '원유'},
-    'FXI':  {'Drop': 1.0, 'Ent': 2.0, 'Ext': -0.1,'Theme': '중국'},
-    'ARKK': {'Drop': 3.3, 'Ent': 3.1, 'Ext': 3.1, 'Theme': '혁신기업'},
-    'TAN':  {'Drop': 2.8, 'Ent': 2.8, 'Ext': 2.3, 'Theme': '태양광'}
+BEASTS = {
+    'TECL': {'sig': 'XLK',  'name': 'TECL (미국기술주 3x)', 'ent': 3.8, 'ext': 2.3, 'drop': 0.7, 'r_ent': 0.02, 'r_ext': 0.02, 'theme': '기술주'},
+    'SOXL': {'sig': 'SOXX', 'name': 'SOXL (반도체 3x)',   'ent': 3.9, 'ext': 2.1, 'drop': 0.4, 'r_ent': 0.02, 'r_ext': 0.02, 'theme': '반도체'},
+    'NAIL': {'sig': 'XHB',  'name': 'NAIL (주택건설 3x)', 'ent': 2.6, 'ext': 1.8, 'drop': 0.2, 'r_ent': 0.02, 'r_ext': 0.02, 'theme': '건설'},
+    'YINN': {'sig': 'FXI',  'name': 'YINN (중국대형주 3x)', 'ent': 3.8, 'ext': 1.9, 'drop': 1.4, 'r_ent': 0.03, 'r_ext': 0.02, 'theme': '중국'},
+    'TMF':  {'sig': 'TLT',  'name': 'TMF (장기국채 3x)',  'ent': 3.2, 'ext': -0.1,'drop': 0.1, 'r_ent': 0.02, 'r_ext': 0.02, 'theme': '안전판'}
 }
 
 # ---------------------------------------------------------
-# ⚙️ 2. 매매 매핑 (Trade: 2배수 야수들)
+# ⚙️ 사이드바 (사용자 상태 및 세금 관리)
 # ---------------------------------------------------------
-# 실제 계좌에 담을 2배수 동생들
-PROXY_MAP = {
-    'SMH':  {'Ticker': 'USD',  'Name': 'ProShares Ultra Semi (2x)'},
-    'SLV':  {'Ticker': 'AGQ',  'Name': 'ProShares Ultra Silver (2x)'},
-    'URA':  {'Ticker': 'URA',  'Name': 'Global X Uranium (1x)'}, # 2배수 없음 (그대로)
-    'USO':  {'Ticker': 'UCO',  'Name': 'ProShares Ultra Oil (2x)'},
-    'FXI':  {'Ticker': 'XPP',  'Name': 'ProShares Ultra China (2x)'},
-    'ARKK': {'Ticker': 'TARK', 'Name': 'AXS 2X Innovation (2x)'}, # TARK 추가 완료!
-    'TAN':  {'Ticker': 'TAN',  'Name': 'Invesco Solar (1x)'}     # 2배수 없음 (그대로)
-}
+with st.sidebar:
+    st.header("💼 내 포트폴리오 상태")
+    st.markdown("현재 실제 계좌에 보유 중인 야수와 **투입 비율**을 선택해 주세요.")
+    
+    user_portfolio = {}
+    for tk, info in BEASTS.items():
+        st.markdown(f"**{info['name']}**")
+        status = st.radio(
+            f"상태 선택 ({info['name']})",
+            options=["미보유 (0%)", "1차 진입 완료 (50%)", "2차 추매 완료 (100%)", "1차 익절 완료 (50% 남음)"],
+            key=tk,
+            label_visibility="collapsed"
+        )
+        if status != "미보유 (0%)":
+            user_portfolio[tk] = status
+            
+    st.markdown("---")
+    st.header("💸 양도소득세(22%) 관리기")
+    st.markdown("올해 1월 1일부터 현재까지 확정된 **누적 실현 수익(달러)**을 입력하세요. 1~5월 매매 시 세금을 빼고 재투자해야 합니다.")
+    annual_profit = st.number_input("올해 실현 수익 ($)", min_value=0.0, value=0.0, step=100.0)
+    
+    tax_liability = annual_profit * 0.22
+    st.metric("내년 5월 예상 양도세 (Reserve)", f"${tax_liability:,.2f}")
+    if tax_liability > 0:
+        st.warning(f"⚠️ 야수 익절 시 **${tax_liability:,.2f}**는 재투자하지 말고 달러 예수금(KOFR 등)으로 묶어두세요!")
 
 # ---------------------------------------------------------
-# ⚙️ 3. 데이터 분석 및 가격 역산 함수
+# ⚙️ 2. 데이터 분석 엔진 (1x 시그널 기반 3x 타점 계산)
 # ---------------------------------------------------------
-@st.cache_data(ttl=900) # 15분마다 갱신 (실전용)
-def analyze_market_real_beast():
-    # 로직용(1x)과 매매용(2x) 티커 모두 수집
-    logic_tickers = list(STRATEGY.keys())
-    trade_tickers = [v['Ticker'] for v in PROXY_MAP.values()]
-    all_tickers = list(set(logic_tickers + trade_tickers))
+@st.cache_data(ttl=900)
+def analyze_us_beasts(portfolio):
+    # 1배수(시그널)와 3배수(타격) 티커 모두 수집
+    sig_tickers = [v['sig'] for v in BEASTS.values()]
+    trd_tickers = list(BEASTS.keys())
+    all_tickers = list(set(sig_tickers + trd_tickers))
     
     try:
-        data = yf.download(all_tickers, period="2y", progress=False) # 넉넉하게 2년
+        data_close = yf.download(all_tickers, period="1y", progress=False)['Close'].ffill()
+        data_high = yf.download(all_tickers, period="1y", progress=False)['High'].ffill()
+        data_low = yf.download(all_tickers, period="1y", progress=False)['Low'].ffill()
     except Exception as e:
-        st.error(f"데이터 다운로드 실패: {e}")
-        return pd.DataFrame()
-
-    if data.empty: return pd.DataFrame()
-
-    # 멀티인덱스 처리
-    if isinstance(data.columns, pd.MultiIndex):
-        try:
-            if 'Close' in data.columns.get_level_values(0):
-                data = data['Close']
-            else:
-                data.columns = data.columns.get_level_values(0)
-        except: pass
+        st.error(f"데이터 다운로드 에러: {e}")
+        return pd.DataFrame(), []
+        
+    if data_close.empty: 
+        return pd.DataFrame(), []
 
     report = []
+    missing_beasts = [] 
     
-    for logic_tk in logic_tickers:
-        try:
-            # 1. 데이터 유효성 체크
-            if logic_tk not in data.columns: continue
-            
-            # 매매할 티커 정보 가져오기
-            trade_info = PROXY_MAP[logic_tk]
-            trade_tk = trade_info['Ticker']
-            
-            # 매매 티커 데이터가 없으면 로직 티커로 대체 (혹시 모를 오류 방지)
-            if trade_tk not in data.columns:
-                current_price = 0.0
-            else:
-                current_price = data[trade_tk].dropna().iloc[-1]
-
-            # 2. 로직(1x) 계산
-            series = data[logic_tk].dropna()
-            closes = series.values
-            if len(closes) < 30: continue
-            
-            p_params = STRATEGY[logic_tk]
-            win = 20
-            x = np.arange(win)
-            
-            # 히스토리 시뮬레이션 (현재 보유 상태 추적)
-            hold = False
-            entry_slope = 0.0
-            
-            for i in range(win, len(closes)-1):
-                y = closes[i-win:i]
-                s, inter, _, _, _ = linregress(x, y)
-                std = np.std(y - (s*x + inter))
-                
-                # 당시 지표
-                curr_sigma = 999.0
-                curr_slope = -999.0
-                if std > 0: curr_sigma = (closes[i] - (s*(win-1)+inter)) / std
-                if closes[i] > 0: curr_slope = (s / closes[i]) * 100
-                
-                if not hold:
-                    if curr_sigma <= -p_params['Ent']:
-                        hold = True; entry_slope = curr_slope
-                else:
-                    if curr_sigma >= p_params['Ext'] or curr_slope < (entry_slope - p_params['Drop']):
-                        hold = False
-
-            # 3. 오늘자 지표 (Live)
-            y_last = closes[-win:]
-            s, inter, _, _, _ = linregress(x, y_last)
-            L = s*(win-1) + inter 
-            std = np.std(y_last - (s*x + inter))
-            
-            logic_price = closes[-1]
-            today_slope = (s / logic_price) * 100 if logic_price > 0 else 0
-            today_sigma = (logic_price - L) / std if std > 0 else 0
-            
-            # 4. 가격 변환 (Logic Price -> Trade Price)
-            # 목표 Sigma 도달 시점의 예상 가격을 2배수 ETF 가격으로 환산
-            conversion_ratio = 1.0
-            if logic_price > 0 and current_price > 0:
-                conversion_ratio = current_price / logic_price
-            
-            # 목표가 역산 (1x 기준) -> 환산 (2x 기준)
-            target_buy_price_1x = L + (-p_params['Ent'] * std)
-            target_sell_price_1x = L + (p_params['Ext'] * std)
-            
-            display_buy_price = target_buy_price_1x * conversion_ratio
-            display_sell_price = target_sell_price_1x * conversion_ratio
-            
-            # 5. 상태 판단 및 메시지
-            status = "HOLDING" if hold else "WAITING"
-            action = "HOLD"
-            
-            display_ent_sigma = f"-{p_params['Ent']} (${display_buy_price:.2f})"
-            display_ext_sigma = f"{p_params['Ext']} (${display_sell_price:.2f})"
-            display_ent_slope = "-"
-            display_stop_slope = "-"
-            
-            if hold:
-                cut_slope_limit = entry_slope - p_params['Drop']
-                display_ent_slope = f"{entry_slope:.2f}%"
-                display_stop_slope = f"{cut_slope_limit:.2f}%"
-                
-                if today_sigma >= p_params['Ext']:
-                    action = "SELL (익절)"
-                elif today_slope < cut_slope_limit:
-                    action = "SELL (손절)"
-                else:
-                    action = "HOLD (보유)"
-            else:
-                if today_sigma <= -p_params['Ent']:
-                    action = "BUY (진입)"
-                    display_ent_slope = f"{today_slope:.2f}% (New)"
-                    display_stop_slope = f"{today_slope - p_params['Drop']:.2f}% (Est)"
-                else:
-                    action = "WAIT (대기)"
-
-            # 6. 리포트 데이터 생성
-            # 이름 포맷: "USD (SMH/반도체)"
-            display_name = f"{trade_tk} ({logic_tk}/{p_params['Theme']})"
-            
-            report.append({
-                'Display Name': display_name,
-                'Ticker': trade_tk,
-                'Action': action,
-                'Price': current_price,
-                'Cur Sigma': today_sigma,
-                'Cur Slope': today_slope,
-                'Target Buy': display_ent_sigma,
-                'Target Sell': display_ext_sigma,
-                'Entry Slope': display_ent_slope,
-                'Stop Slope': display_stop_slope,
-                'Theme': p_params['Theme']
-            })
-            
-        except Exception as e:
+    for tk in trd_tickers:
+        sig_tk = BEASTS[tk]['sig']
+        
+        if tk not in data_close.columns or sig_tk not in data_close.columns: 
+            missing_beasts.append(BEASTS[tk]['name'])
             continue
             
-    return pd.DataFrame(report)
+        # 기준 지표는 모두 시그널(1배수) 차트로 계산
+        sig_closes = data_close[sig_tk].dropna().values
+        sig_highs = data_high[sig_tk].dropna().values
+        sig_lows = data_low[sig_tk].dropna().values
+        
+        # 가격 표시는 유저가 실제로 사는 3배수 차트로 표시
+        trd_closes = data_close[tk].dropna().values
+        
+        if len(sig_closes) < 30: 
+            missing_beasts.append(BEASTS[tk]['name'])
+            continue
+        
+        p = BEASTS[tk]
+        win = 20
+        x = np.arange(win)
+        
+        # 오늘자(마지막 거래일) 1배수 지표 계산
+        y_last = sig_closes[-win:]
+        s, inter, _, _, _ = linregress(x, y_last)
+        L = s*(win-1) + inter 
+        std = np.std(y_last - (s*x + inter))
+        
+        today_sig_price = sig_closes[-1]
+        today_trd_price = trd_closes[-1] # 실제 3x 가격
+        
+        today_slope = (s / today_sig_price) * 100 if today_sig_price > 0 else 0
+        today_sigma = (today_sig_price - L) / std if std > 0 else 0
+        
+        # 🌟 V18.0 미국장 동적 스케일링 판별 🌟
+        action = "WAIT (대기)"
+        target_info = f"진입대기 (목표 Sig -{p['ent']:.1f})"
+        
+        if tk in portfolio:
+            status = portfolio[tk]
+            
+            # [최근 10일 기울기 평균 - 손절 기준선 계산]
+            recent_slopes = []
+            for i in range(len(sig_closes)-10, len(sig_closes)):
+                sy, _inter, _, _, _ = linregress(x, sig_closes[i-win:i])
+                recent_slopes.append((sy/sig_closes[i])*100)
+            avg_ent_slope = np.mean(recent_slopes)
+            
+            # 1. 1차 진입 완료 상태 (50% 보유)
+            if status == "1차 진입 완료 (50%)":
+                recent_low = np.min(sig_lows[-10:]) 
+                bounce_rate = (today_sig_price - recent_low) / recent_low
+                
+                if today_slope < (avg_ent_slope - p['drop']):
+                    action = "🛑 SELL ALL (손절)"
+                    target_info = f"기울기 꺾임 (현재 {today_slope:.2f}% < 기준 {avg_ent_slope - p['drop']:.2f}%)"
+                elif bounce_rate >= p['r_ent']:
+                    action = "🔥 BUY 50% (2차 추매)"
+                    target_info = f"저점대비 +{bounce_rate*100:.1f}% 반등 (목표 {p['r_ent']*100}%)"
+                else:
+                    action = "HOLD 50% (관망)"
+                    target_info = f"반등 대기 (현재 +{bounce_rate*100:.1f}%)"
+
+            # 2. 2차 진입 완료 상태 (100% 보유)
+            elif status == "2차 추매 완료 (100%)":
+                if today_slope < (avg_ent_slope - p['drop']):
+                    action = "🛑 SELL ALL (손절)"
+                    target_info = f"기울기 꺾임 (현재 {today_slope:.2f}% < 기준 {avg_ent_slope - p['drop']:.2f}%)"
+                elif today_sigma >= p['ext']:
+                    action = "💰 SELL 50% (1차 익절)"
+                    target_info = f"과매수 도달 (Sig {today_sigma:.2f} >= {p['ext']:.1f})"
+                else:
+                    action = "HOLD 100% (관망)"
+                    target_info = f"슈팅 대기 (현재 Sig {today_sigma:.2f})"
+
+            # 3. 1차 익절 완료 상태 (50% 보유)
+            elif status == "1차 익절 완료 (50% 남음)":
+                recent_high = np.max(sig_highs[-10:])
+                drop_rate = (recent_high - today_sig_price) / recent_high
+                
+                if drop_rate >= p['r_ext']:
+                    action = "📉 SELL ALL (최종 익절)"
+                    target_info = f"고점대비 -{drop_rate*100:.1f}% 하락 (목표 {p['r_ext']*100}%)"
+                else:
+                    action = "HOLD 50% (관망)"
+                    target_info = f"하락 대기 (현재 -{drop_rate*100:.1f}%)"
+                    
+        else:
+            # 미보유 상태
+            if today_sigma <= -p['ent']:
+                action = "🛒 BUY 50% (1차 진입)"
+                target_info = f"과매도 도달 (Sig {today_sigma:.2f} <= -{p['ent']:.1f})"
+            else:
+                action = "WAIT (대기)"
+                target_info = f"진입 대기 (현재 Sig {today_sigma:.2f})"
+                
+        report.append({
+            'Theme': p['theme'],
+            'Signal(1x)': sig_tk,
+            'Trade(3x)': p['name'],
+            'Action': action,
+            'Price(3x)': float(today_trd_price),
+            'Sigma(1x)': float(today_sigma),
+            'Slope(1x)': float(today_slope),
+            'Status / Target': target_info
+        })
+
+    return pd.DataFrame(report), missing_beasts
 
 # ---------------------------------------------------------
-# ⚙️ 4. UI 렌더링
+# ⚙️ 3. 웹 UI 렌더링
 # ---------------------------------------------------------
-st.title("🦁 2x Real Beast Strategy")
-st.markdown("### `MDD -41%`를 견디는 자에게 `CAGR 61%`가 있으라.")
-st.caption(f"Last Update: {time.strftime('%Y-%m-%d %H:%M:%S')} | Data Source: Yahoo Finance")
+st.title("🦅 The Quantum Oracle V18.0 (US Alpha Hunter)")
+st.caption(f"Last Update: {time.strftime('%Y-%m-%d %H:%M:%S')} | Logic: 1x Signal -> 3x Execution & Tax Reserve")
 st.markdown("---")
 
-# 데이터 로딩
-with st.spinner('야수의 심장으로 시장을 스캔 중입니다... (2배수 로딩)'):
-    df_res = analyze_market_real_beast()
+with st.spinner("월스트리트 야수들의 실시간 시그널을 분석 중입니다..."):
+    df_res, missing_beasts = analyze_us_beasts(user_portfolio) 
+
+if missing_beasts:
+    st.warning(f"⚠️ 야후 파이낸스 서버 오류로 데이터 누락: **{', '.join(missing_beasts)}**")
 
 if not df_res.empty:
+    st.subheader("📊 미국 5야수 실시간 시그널 대시보드")
     
-    # 스타일링 함수
     def text_color_action(val):
-        if 'BUY' in val: return 'color: #2ecc71; font-weight: bold;' # 밝은 초록
-        if 'SELL' in val: return 'color: #e74c3c; font-weight: bold;' # 밝은 빨강
-        if 'HOLD' in val: return 'color: #3498db; font-weight: bold;' # 밝은 파랑
-        return 'color: #95a5a6;'
+        if 'BUY' in val: return 'color: #155724; background-color: #d4edda; font-weight: bold;'
+        if 'SELL' in val: return 'color: #721c24; background-color: #f8d7da; font-weight: bold;'
+        if 'HOLD' in val: return 'color: #004085; background-color: #cce5ff; font-weight: bold;'
+        if 'WAIT' in val: return 'color: #856404; background-color: #fff3cd;'
+        return 'color: #383d41; background-color: #e2e3e5;'
 
-    # 메인 테이블 출력
     st.dataframe(
         df_res.style
         .map(text_color_action, subset=['Action'])
         .format({
-            'Price': '${:.2f}',
-            'Cur Sigma': '{:.2f}',
-            'Cur Slope': '{:.2f}%'
+            'Price(3x)': '${:,.2f}',
+            'Sigma(1x)': '{:.2f}',
+            'Slope(1x)': '{:.2f}%'
         })
         .set_properties(**{'text-align': 'center'})
         .set_table_styles([{'selector': 'th', 'props': [('text-align', 'center')]}])
         , 
         use_container_width=True,
-        hide_index=True,
-        column_order=['Display Name', 'Action', 'Price', 'Cur Sigma', 'Cur Slope', 'Target Buy', 'Target Sell', 'Entry Slope', 'Stop Slope']
+        hide_index=True
     )
     
-    # 요약 카드 (Summary Cards)
     st.markdown("---")
-    c1, c2, c3 = st.columns(3)
+    st.subheader("📝 미국장 행동 강령 (Action Plan)")
     
-    buy_list = df_res[df_res['Action'].str.contains('BUY')]['Ticker'].tolist()
-    sell_list = df_res[df_res['Action'].str.contains('SELL')]['Ticker'].tolist()
-    hold_list = df_res[df_res['Action'].str.contains('HOLD')]['Ticker'].tolist()
+    action_items = df_res[df_res['Action'].str.contains('BUY|SELL')]
     
-    with c1:
-        st.success(f"**🟢 BUY ({len(buy_list)})**")
-        if buy_list:
-            for t in buy_list: st.write(f"- {t} 진입!")
-        else: st.caption("진입 신호 없음")
-        
-    with c2:
-        st.error(f"**🔴 SELL ({len(sell_list)})**")
-        if sell_list:
-            for t in sell_list: st.write(f"- {t} 청산/손절!")
-        else: st.caption("청산 신호 없음")
-        
-    with c3:
-        st.info(f"**🔵 HOLD ({len(hold_list)})**")
-        if hold_list:
-            for t in hold_list: st.write(f"- {t} 보유 중")
-        else: st.caption("보유 종목 없음")
-
-    # 가이드
-    with st.expander("📖 **[Real Beast] 매매 원칙 (필독)**", expanded=True):
-        st.markdown("""
-        1.  **시그널과 매매의 분리:** * 신호는 안정적인 `1배수 ETF(SMH, SLV 등)`에서 찾습니다.
-            * 매매는 화끈한 `2배수 ETF(USD, AGQ 등)`로 실행합니다.
-        2.  **이벤트 드리븐 리밸런싱 (Event-Driven):**
-            * **`BUY`** 또는 **`SELL`** 신호가 뜬 날에만 계좌를 확인합니다.
-            * 신호가 뜨면 **[전량 매도(현금화) + 신규/기존 종목 1/N 재매수]**를 수행하여 비중을 맞춥니다.
-            * 신호가 없는 날은 HTS를 켜지 마십시오. (세금 절약 + 멘탈 관리)
-        3.  **야수의 심장:** * MDD -40%는 시스템 오류가 아니라 **'스프링이 눌리는 과정'**입니다. 절대 쫄지 마십시오.
-            * 2배수 레버리지는 횡보장에서 녹습니다. 하지만 추세가 터지면 그 모든 손실을 한 방에 만회합니다.
-        """)
-
-else:
-    st.error("데이터 수집 실패. 잠시 후 새로고침(F5) 해주세요.")
+    if not action_items.empty:
+        for _, row in action_items.iterrows():
+            if 'SELL ALL' in row['Action']:
+                if '손절' in row['Action']:
+                    st.error(f"🚨 **[전량 손절]** {row['Trade(3x)']} : {row['Status / Target']} -> 오늘 밤 프리장/본장에서 남은 물량 100% 매도!")
+                else:
+                    st.error(f"📉 **[최종 익절]** {row['Trade(3x)']} : {row['Status / Target']} -> 추세 꺾임 확인. 오늘 밤 남은 물량 100% 매도!")
+            elif 'SELL 50%' in row['Action']:
+                st.warning(f"💰 **[절반 익절]** {row['Trade(3x)']} : {row['Status / Target']} -> 과매수 도달! 오늘 밤 보유 물량의 50% 1차 익절!")
+            elif 'BUY 50% (2차' in row['Action']:
+                st.success(f"🔥 **[불타기 추매]** {row['Trade(3x)']} : {row['Status / Target']} -> 반등 확인! 오늘 밤 남은 현금 100% 투입!")
+            elif 'BUY 50% (1차' in row['Action']:
+                st.info(f"🛒 **[1차 진입]** {row['Trade(3x)']} : {row['Status / Target']} -> 피의 바다 도달. 오늘 밤 할당 비중의 50%만 매수!")
+    else:
+        if user_portfolio:
+            st.success("▶️ **[HOLD]** 현재 야수가 사냥 중입니다. 미국장은 변동성이 큽니다. 시그널이 뜰 때까지 푹 주무십시오.")
+        else:
+            st.success("🏦 **[100% CASH PARKING]** 달러 예수금 파킹 통장(KOFR 등)에서 연 4% 이자를 받으며 편안하게 관망하십시오.")
