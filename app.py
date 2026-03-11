@@ -9,13 +9,13 @@ import time
 # ⚙️ 페이지 설정
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="US 5 Beasts V18.0 (Alpha Hunter)",
+    page_title="US 5 Beasts V18.1 (Alpha Hunter)",
     page_icon="🦅",
     layout="wide"
 )
 
 # ---------------------------------------------------------
-# ⚙️ 1. 전략 파라미터 (V18.0 미국 Set 1: Alpha Hunter)
+# ⚙️ 1. 전략 파라미터 (V18.1 미국 Set 1: Alpha Hunter)
 # 시그널(sig)은 1배수로 분석하고, 실제 매매는 3배수로 진행
 # ---------------------------------------------------------
 BEASTS = {
@@ -60,7 +60,6 @@ with st.sidebar:
 # ---------------------------------------------------------
 @st.cache_data(ttl=900)
 def analyze_us_beasts(portfolio):
-    # 1배수(시그널)와 3배수(타격) 티커 모두 수집
     sig_tickers = [v['sig'] for v in BEASTS.values()]
     trd_tickers = list(BEASTS.keys())
     all_tickers = list(set(sig_tickers + trd_tickers))
@@ -86,12 +85,9 @@ def analyze_us_beasts(portfolio):
             missing_beasts.append(BEASTS[tk]['name'])
             continue
             
-        # 기준 지표는 모두 시그널(1배수) 차트로 계산
         sig_closes = data_close[sig_tk].dropna().values
         sig_highs = data_high[sig_tk].dropna().values
         sig_lows = data_low[sig_tk].dropna().values
-        
-        # 가격 표시는 유저가 실제로 사는 3배수 차트로 표시
         trd_closes = data_close[tk].dropna().values
         
         if len(sig_closes) < 30: 
@@ -102,33 +98,29 @@ def analyze_us_beasts(portfolio):
         win = 20
         x = np.arange(win)
         
-        # 오늘자(마지막 거래일) 1배수 지표 계산
         y_last = sig_closes[-win:]
         s, inter, _, _, _ = linregress(x, y_last)
         L = s*(win-1) + inter 
         std = np.std(y_last - (s*x + inter))
         
         today_sig_price = sig_closes[-1]
-        today_trd_price = trd_closes[-1] # 실제 3x 가격
+        today_trd_price = trd_closes[-1] 
         
         today_slope = (s / today_sig_price) * 100 if today_sig_price > 0 else 0
         today_sigma = (today_sig_price - L) / std if std > 0 else 0
         
-        # 🌟 V18.0 미국장 동적 스케일링 판별 🌟
         action = "WAIT (대기)"
-        target_info = f"진입대기 (목표 Sig -{p['ent']:.1f})"
+        target_info = f"진입 대기 (목표 Sig -{p['ent']:.1f})"
         
         if tk in portfolio:
             status = portfolio[tk]
             
-            # [최근 10일 기울기 평균 - 손절 기준선 계산]
             recent_slopes = []
             for i in range(len(sig_closes)-10, len(sig_closes)):
                 sy, _inter, _, _, _ = linregress(x, sig_closes[i-win:i])
                 recent_slopes.append((sy/sig_closes[i])*100)
             avg_ent_slope = np.mean(recent_slopes)
             
-            # 1. 1차 진입 완료 상태 (50% 보유)
             if status == "1차 진입 완료 (50%)":
                 recent_low = np.min(sig_lows[-10:]) 
                 bounce_rate = (today_sig_price - recent_low) / recent_low
@@ -143,7 +135,6 @@ def analyze_us_beasts(portfolio):
                     action = "HOLD 50% (관망)"
                     target_info = f"반등 대기 (현재 +{bounce_rate*100:.1f}%)"
 
-            # 2. 2차 진입 완료 상태 (100% 보유)
             elif status == "2차 추매 완료 (100%)":
                 if today_slope < (avg_ent_slope - p['drop']):
                     action = "🛑 SELL ALL (손절)"
@@ -155,7 +146,6 @@ def analyze_us_beasts(portfolio):
                     action = "HOLD 100% (관망)"
                     target_info = f"슈팅 대기 (현재 Sig {today_sigma:.2f})"
 
-            # 3. 1차 익절 완료 상태 (50% 보유)
             elif status == "1차 익절 완료 (50% 남음)":
                 recent_high = np.max(sig_highs[-10:])
                 drop_rate = (recent_high - today_sig_price) / recent_high
@@ -168,13 +158,13 @@ def analyze_us_beasts(portfolio):
                     target_info = f"하락 대기 (현재 -{drop_rate*100:.1f}%)"
                     
         else:
-            # 미보유 상태
+            # 🌟 미보유 상태: 진입 대기 시 중복 정보 제거 및 '목표 시그마' 출력 🌟
             if today_sigma <= -p['ent']:
                 action = "🛒 BUY 50% (1차 진입)"
                 target_info = f"과매도 도달 (Sig {today_sigma:.2f} <= -{p['ent']:.1f})"
             else:
                 action = "WAIT (대기)"
-                target_info = f"진입 대기 (현재 Sig {today_sigma:.2f})"
+                target_info = f"진입 대기 (목표 Sig -{p['ent']:.1f})"
                 
         report.append({
             'Theme': p['theme'],
@@ -192,7 +182,7 @@ def analyze_us_beasts(portfolio):
 # ---------------------------------------------------------
 # ⚙️ 3. 웹 UI 렌더링
 # ---------------------------------------------------------
-st.title("🦅 The Quantum Oracle V18.0 (US Alpha Hunter)")
+st.title("🦅 The Quantum Oracle V18.1 (US Alpha Hunter)")
 st.caption(f"Last Update: {time.strftime('%Y-%m-%d %H:%M:%S')} | Logic: 1x Signal -> 3x Execution & Tax Reserve")
 st.markdown("---")
 
